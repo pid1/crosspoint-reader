@@ -31,6 +31,7 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   std::string serverUrl;                                            // Custom sync server URL (empty = default)
   DocumentMatchMethod matchMethod = DocumentMatchMethod::FILENAME;  // Default to filename for compatibility
   bool sendMetadata = false;                                        // Send document metadata with progress sync
+  bool matchOtherCopies = false;                                    // Send the identifier list with progress requests
   KOReaderSyncBehavior syncBehavior = KOReaderSyncBehavior::SMART;
 
   // Private constructor for singleton
@@ -75,6 +76,12 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   // Send metadata setting
   void setSendMetadata(bool enabled);
   bool getSendMetadata() const { return sendMetadata; }
+
+  // Whether progress requests carry the optional identifier list
+  // (koreader-sync-server PR #55), which lets a server find the record written
+  // from another copy of the same book.
+  void setMatchOtherCopies(bool enabled);
+  bool getMatchOtherCopies() const { return matchOtherCopies; }
 
   // Sync behavior
   void setSyncBehavior(KOReaderSyncBehavior behavior);
