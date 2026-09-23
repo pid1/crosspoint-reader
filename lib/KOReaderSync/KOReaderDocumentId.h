@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <string>
+#include <vector>
 
 /**
  * Calculate KOReader document ID (partial MD5 hash).
@@ -33,6 +34,21 @@ class KOReaderDocumentId {
    * @return 32-character lowercase hex MD5 of the filename
    */
   static std::string calculateFromFilename(const std::string& filePath);
+
+  /**
+   * Calculate the digest that names the work rather than the file: md5 over
+   * `"title:" + title + "\n" + "authors:" + authors`, each value lowercased
+   * with runs of whitespace collapsed and trimmed, the authors sorted and
+   * joined with `;` so their order in the OPF does not matter.
+   *
+   * Another edition of the same book matches here, and so does a conversion
+   * that re-chunked the spine, which no stronger identifier survives. Two
+   * books a library tagged alike match here too, which is what makes it weak.
+   *
+   * @return 32-character lowercase hex string, or empty without both a title
+   *         and an author
+   */
+  static std::string calculateFromMetadata(const std::string& title, const std::vector<std::string>& authors);
 
  private:
   // Size of each chunk to read at each offset

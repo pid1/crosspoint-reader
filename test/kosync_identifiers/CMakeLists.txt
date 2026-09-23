@@ -2,6 +2,7 @@ find_package(EXPAT REQUIRED)
 
 add_executable(KosyncIdentifiersTest
   KosyncIdentifiersTest.cpp
+  ${REPO_ROOT}/lib/KOReaderSync/KOReaderDocumentId.cpp
   ${REPO_ROOT}/lib/KOReaderSync/KOReaderIdentifiers.cpp
   ${REPO_ROOT}/lib/KOReaderSync/KOReaderStructureDigest.cpp
   ${REPO_ROOT}/lib/Epub/Epub/parsers/ContainerParser.cpp

@@ -27,7 +27,7 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
  public:
   explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath,
                                 CrossPointPosition localPosition, SavedProgressPosition localKoPos,
-                                std::string localChapterName, std::string structureDigest);
+                                std::string localChapterName, std::string structureDigest, std::string metadataDigest);
 
   void onEnter() override;
   void onExit() override;
@@ -62,6 +62,12 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
   // in, computed in the reader while the Epub was still open. Empty when the
   // OPF could not be read, which drops the identifier rather than the request.
   std::string structureDigest;
+
+  // The digest of the work rather than of the copy, from the same OPF pass. It
+  // reaches an edition whose spine is chunked differently, which no stronger
+  // identifier does, and it goes out weak because it reaches an unrelated book
+  // a library tagged alike just as readily.
+  std::string metadataDigest;
   std::vector<KOReaderIdentifier> identifiers;
 
   // Remote progress data

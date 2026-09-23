@@ -17,6 +17,7 @@
 
 #include "ContainerParser.h"
 #include "ContentOpfParser.h"
+#include "KOReaderDocumentId.h"
 #include "KOReaderStructureDigest.h"
 
 namespace fixture {
@@ -124,9 +125,15 @@ inline std::string member(const std::string& archive, const std::string& name) {
   return extracted;
 }
 
+// Both identifiers the OPF carries, each empty when the recipe yields none.
+struct Digests {
+  std::string structure;
+  std::string metadata;
+};
+
 // The firmware's own two passes: container.xml for the package document, then
-// the OPF for the package identifier and the spine.
-inline std::string structureDigest(const std::string& archive) {
+// the OPF for the package identifier, the spine, the title and the creators.
+inline Digests digests(const std::string& archive) {
   const std::string container = member(archive, "META-INF/container.xml");
   if (container.empty()) return {};
 
@@ -144,7 +151,11 @@ inline std::string structureDigest(const std::string& archive) {
   ContentOpfParser opfParser(cachePath, basePath, opf.size(), nullptr, false, &digest);
   if (!opfParser.setup()) throw std::runtime_error("opf parser setup failed");
   opfParser.write(reinterpret_cast<const uint8_t*>(opf.data()), opf.size());
-  return digest.finish();
+  return {digest.finish(), KOReaderDocumentId::calculateFromMetadata(opfParser.title, opfParser.creators)};
 }
+
+inline std::string structureDigest(const std::string& archive) { return digests(archive).structure; }
+
+inline std::string metadataDigest(const std::string& archive) { return digests(archive).metadata; }
 
 }  // namespace fixture

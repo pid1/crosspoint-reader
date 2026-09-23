@@ -42,6 +42,10 @@ class ContentOpfParser final : public Print {
   // separation as element state rather than inferring either from callbacks.
   bool metadataSpacePending = false;
   bool authorSeparatorPending = false;
+  // Where in `author` the creator being read started, so each one is also
+  // available on its own. The display string joins them; the metadata digest
+  // sorts them, and a name written "Whitman, Walt" must stay one name.
+  size_t creatorStart = 0;
 
   // The `<package unique-identifier>` attribute and the `dc:identifier`
   // elements it selects between. Trimmed of XML whitespace and nothing else;
@@ -85,6 +89,7 @@ class ContentOpfParser final : public Print {
  public:
   std::string title;
   std::string author;
+  std::vector<std::string> creators;
   std::string language;
   std::string tocNcxPath;
   std::string tocNavPath;  // EPUB 3 nav document path

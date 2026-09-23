@@ -4,6 +4,10 @@
 #include <Logging.h>
 #include <MD5Builder.h>
 
+#include <algorithm>
+
+#include "KOReaderIdentifiers.h"
+
 namespace {
 // Extract filename from path (everything after last '/')
 std::string getFilename(const std::string& path) {
@@ -28,6 +32,51 @@ std::string KOReaderDocumentId::calculateFromFilename(const std::string& filePat
 
   std::string result = md5.toString().c_str();
   LOG_DBG("KODoc", "Filename hash: %s (from '%s')", result.c_str(), filename.c_str());
+  return result;
+}
+
+std::string KOReaderDocumentId::calculateFromMetadata(const std::string& title,
+                                                      const std::vector<std::string>& authors) {
+  const std::string normalizedTitle = KOReaderIdentifiers::normalizeMetadataText(title);
+  if (normalizedTitle.empty()) {
+    LOG_DBG("KODoc", "No title to hash");
+    return "";
+  }
+
+  std::vector<std::string> normalizedAuthors;
+  normalizedAuthors.reserve(authors.size());
+  for (const std::string& author : authors) {
+    std::string normalized = KOReaderIdentifiers::normalizeMetadataText(author);
+    if (!normalized.empty()) {
+      normalizedAuthors.push_back(std::move(normalized));
+    }
+  }
+  // A title alone names a shelf of editions, reprints and unrelated books
+  if (normalizedAuthors.empty()) {
+    LOG_DBG("KODoc", "No author to hash");
+    return "";
+  }
+  std::sort(normalizedAuthors.begin(), normalizedAuthors.end());
+
+  std::string joinedAuthors;
+  for (const std::string& author : normalizedAuthors) {
+    if (!joinedAuthors.empty()) {
+      joinedAuthors.push_back(';');
+    }
+    joinedAuthors.append(author);
+  }
+
+  MD5Builder md5;
+  md5.begin();
+  md5.add("title:");
+  md5.add(normalizedTitle.c_str());
+  md5.add("\nauthors:");
+  md5.add(joinedAuthors.c_str());
+  md5.calculate();
+
+  std::string result = md5.toString().c_str();
+  LOG_DBG("KODoc", "Metadata hash: %s (from '%s' / '%s')", result.c_str(), normalizedTitle.c_str(),
+          joinedAuthors.c_str());
   return result;
 }
 

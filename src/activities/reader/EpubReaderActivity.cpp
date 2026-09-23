@@ -30,6 +30,7 @@
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderDocumentId.h"
 #include "KOReaderStructureDigest.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
@@ -958,17 +959,20 @@ bool EpubReaderActivity::launchKOReaderSync() {
   std::string localChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
   const std::string savedEpubPath = epub->getPath();
 
-  // The identifier that describes the book rather than the file, taken while
+  // The identifiers that describe the book rather than the file, taken while
   // the Epub is open: the sync activity runs with it released, and reloading it
   // there would compete with the TLS handshake for heap. Only Match Other
-  // Copies puts it on the wire, and reading it costs an OPF parse.
+  // Copies puts them on the wire, and reading them costs one OPF parse.
   std::string structureDigest;
+  std::string metadataDigest;
   if (KOREADER_STORE.getMatchOtherCopies()) {
     KOReaderStructureDigest digest;
-    if (epub->readStructureIdentity(digest)) {
+    BookIdentity identity;
+    if (epub->readOpfIdentity(digest, &identity)) {
       structureDigest = digest.finish();
+      metadataDigest = KOReaderDocumentId::calculateFromMetadata(identity.title, identity.authors);
     } else {
-      LOG_DBG("KOSync", "No structure identifier: the OPF could not be read");
+      LOG_DBG("KOSync", "No structure or metadata identifier: the OPF could not be read");
     }
   }
 
@@ -1000,9 +1004,9 @@ bool EpubReaderActivity::launchKOReaderSync() {
   }
   LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
 
-  activityManager.replaceActivity(
-      std::make_unique<KOReaderSyncActivity>(renderer, mappedInput, savedEpubPath, localPos, std::move(localKoPos),
-                                             std::move(localChapterName), std::move(structureDigest)));
+  activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
+      renderer, mappedInput, savedEpubPath, localPos, std::move(localKoPos), std::move(localChapterName),
+      std::move(structureDigest), std::move(metadataDigest)));
   return true;
 }
 

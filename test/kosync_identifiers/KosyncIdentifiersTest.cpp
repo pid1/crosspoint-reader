@@ -5,6 +5,7 @@
 
 #include "EpubFixture.h"
 #include "HalStorage.h"
+#include "KOReaderDocumentId.h"
 #include "KOReaderIdentifiers.h"
 #include "KOReaderStructureDigest.h"
 
@@ -54,6 +55,53 @@ TEST(Flatten, WritesTypeValuePairsInListOrder) {
 }
 
 TEST(Flatten, EmptyListProducesNoQuery) { EXPECT_EQ(KOReaderIdentifiers::flatten({}), ""); }
+
+TEST(Flatten, LeavesTheWeakFlagOutOfTheQuery) {
+  const std::vector<KOReaderIdentifier> identifiers = {{"content", "C1"}, {"metadata", "M1", true}};
+  EXPECT_EQ(KOReaderIdentifiers::flatten(identifiers), "content:C1,metadata:M1");
+}
+
+TEST(IsWeak, OnlyTheLabelThatCanNameAnotherWork) {
+  EXPECT_TRUE(KOReaderIdentifiers::isWeak(KOReaderIdentifiers::TYPE_METADATA));
+  EXPECT_FALSE(KOReaderIdentifiers::isWeak(KOReaderIdentifiers::TYPE_CONTENT));
+  EXPECT_FALSE(KOReaderIdentifiers::isWeak(KOReaderIdentifiers::TYPE_STRUCTURE));
+  EXPECT_FALSE(KOReaderIdentifiers::isWeak(KOReaderIdentifiers::TYPE_FILENAME));
+}
+
+// ---------------------------------------------------------------------------
+// metadata: md5 over "title:" + title + "\n" + "authors:" + authors, each
+// lowercased with whitespace collapsed and trimmed, the authors sorted and
+// joined with ";".
+
+TEST(MetadataDigest, HashesTheRegistrysLines) {
+  EXPECT_EQ(KOReaderDocumentId::calculateFromMetadata("Leaves of Grass", {"Walt Whitman"}),
+            md5Of("title:leaves of grass\nauthors:walt whitman"));
+}
+
+TEST(MetadataDigest, IgnoresCasePaddingAndAuthorOrder) {
+  const std::string digest =
+      KOReaderDocumentId::calculateFromMetadata("Good Omens", {"Neil Gaiman", "Terry Pratchett"});
+  EXPECT_EQ(digest, KOReaderDocumentId::calculateFromMetadata("  GOOD\t Omens ", {"Terry  Pratchett", " neil gaiman"}));
+  EXPECT_EQ(digest, md5Of("title:good omens\nauthors:neil gaiman;terry pratchett"));
+}
+
+// One `dc:creator` is one author however it is spelled, so the separator the
+// display string uses cannot be read back as a boundary.
+TEST(MetadataDigest, KeepsACommaInsideOneAuthorsName) {
+  EXPECT_NE(KOReaderDocumentId::calculateFromMetadata("T", {"Whitman, Walt"}),
+            KOReaderDocumentId::calculateFromMetadata("T", {"Whitman", "Walt"}));
+}
+
+TEST(MetadataDigest, TellsTwoWorksApart) {
+  EXPECT_NE(KOReaderDocumentId::calculateFromMetadata("The Dispossessed", {"Ursula K. Le Guin"}),
+            KOReaderDocumentId::calculateFromMetadata("The Dispossessed", {"Someone Else"}));
+}
+
+TEST(MetadataDigest, NeedsBothATitleAndAnAuthor) {
+  EXPECT_EQ(KOReaderDocumentId::calculateFromMetadata("The Dispossessed", {}), "");
+  EXPECT_EQ(KOReaderDocumentId::calculateFromMetadata("The Dispossessed", {"  "}), "");
+  EXPECT_EQ(KOReaderDocumentId::calculateFromMetadata("  ", {"Ursula K. Le Guin"}), "");
+}
 
 TEST(ProgressTrusted, FollowsTheXPathOnlyForFileLevelMatches) {
   EXPECT_TRUE(KOReaderIdentifiers::progressTrusted("content"));
@@ -306,6 +354,40 @@ TEST_F(StructureDigestFixtures, ChangesWhenASpineEntryIsReordered) {
   opf->replace(first, 22, "<itemref idref=\"main1\"");
 
   EXPECT_NE(fixture::structureDigest(epub.pack()), before);
+}
+
+// The same digest the KOReader and Readest implementations of the recipe report
+// for this book.
+TEST_F(StructureDigestFixtures, DigestsTheMetadataOfLeavesOfGrass) {
+  const std::string archive = fixture::build(leavesDir(), "content.opf").pack();
+  EXPECT_EQ(fixture::metadataDigest(archive), "e31fbadda910cfd764fb8c03b8cf4e03");
+}
+
+TEST_F(StructureDigestFixtures, TheTwoBooksMetadataDiffers) {
+  const std::string leaves = fixture::metadataDigest(fixture::build(leavesDir(), "content.opf").pack());
+  const std::string juliet = fixture::metadataDigest(fixture::build(julietDir(), "OPS/fb.opf").pack());
+
+  EXPECT_FALSE(leaves.empty());
+  EXPECT_NE(leaves, juliet);
+}
+
+// What metadata is for: a conversion that re-chunks the spine moves every
+// stronger identifier and leaves this one where it was.
+TEST_F(StructureDigestFixtures, MetadataSurvivesASpineChange) {
+  fixture::Epub epub = fixture::build(julietDir(), "OPS/fb.opf");
+  const fixture::Digests before = fixture::digests(epub.pack());
+
+  std::string* opf = epub.find("OPS/fb.opf");
+  ASSERT_NE(opf, nullptr);
+  const size_t at = opf->find("<itemref idref=\"main0\"");
+  ASSERT_NE(at, std::string::npos);
+  const size_t end = opf->find('>', at);
+  opf->erase(at, end - at + 1);
+
+  const fixture::Digests after = fixture::digests(epub.pack());
+  EXPECT_NE(after.structure, before.structure);
+  EXPECT_EQ(after.metadata, before.metadata);
+  EXPECT_FALSE(after.metadata.empty());
 }
 
 TEST_F(StructureDigestFixtures, ChangesWhenASpineEntryIsRemoved) {
