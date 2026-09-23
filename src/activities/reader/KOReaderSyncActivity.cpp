@@ -134,6 +134,16 @@ bool KOReaderSyncActivity::smartSyncEnabled() const {
   return KOREADER_STORE.getSyncBehavior() == KOReaderSyncBehavior::SMART;
 }
 
+// The identifier list is what a server carrying koreader-sync-server PR #55
+// walks to reach the record another copy of this book wrote. An empty list is
+// the request every server has always answered, so Match Other Copies off
+// leaves both endpoints exactly as they were.
+void KOReaderSyncActivity::prepareIdentifiers(const DocumentMatchMethod method) {
+  identifiers.clear();
+  if (!KOREADER_STORE.getMatchOtherCopies()) return;
+  identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, smartSyncEnabled());
+}
+
 void KOReaderSyncActivity::markAutoReturn() { autoReturnAt = millis() + AUTO_RETURN_DELAY_MS; }
 
 void KOReaderSyncActivity::completeAlreadySynced() {
@@ -184,7 +194,7 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
   const std::string primaryHash = documentHash;
-  identifiers = buildIdentifiers(epubPath, primaryMethod, documentHash, structureDigest, smartSyncEnabled());
+  prepareIdentifiers(primaryMethod);
 
   LOG_DBG("KOSync", "Document hash (%s): %s, %u identifiers", matchMethodName(primaryMethod), documentHash.c_str(),
           (unsigned)identifiers.size());
@@ -482,7 +492,7 @@ void KOReaderSyncActivity::startUpload() {
   if (documentHash.empty()) {
     const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
     documentHash = calculateDocumentHashForMethod(epubPath, method);
-    identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, smartSyncEnabled());
+    prepareIdentifiers(method);
   }
   performUpload();
 }
@@ -569,6 +579,12 @@ void KOReaderSyncActivity::buildResultScreen(UiScreen& screen) {
     detailLine(remoteChapter.c_str());
     detailLine(remoteVal);
     if (deviceStr[0] != '\0') detailLine(deviceStr);
+    // The stored xpointer was written against a different file, so the chapter
+    // and page above come from the percentage rather than from the position
+    // itself. Say so here, where the reader is deciding whether to take it.
+    if (!KOReaderIdentifiers::progressTrusted(remoteProgress.progressMatch)) {
+      detailLine(tr(STR_APPROXIMATE_MATCH));
+    }
     screen.spacer(screen.theme().spaceLg);
     labelLine(tr(STR_LOCAL_LABEL));
     detailLine(localChapter);

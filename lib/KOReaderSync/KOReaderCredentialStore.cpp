@@ -25,6 +25,7 @@ void KOReaderCredentialStore::toJson(JsonDocument& doc) const {
   doc["serverUrl"] = getServerUrl();
   doc["matchMethod"] = static_cast<uint8_t>(getMatchMethod());
   doc["sendMetadata"] = getSendMetadata();
+  doc["matchOtherCopies"] = getMatchOtherCopies();
   doc["syncBehavior"] = static_cast<uint8_t>(getSyncBehavior());
 }
 
@@ -58,6 +59,7 @@ bool KOReaderCredentialStore::fromJson(JsonVariantConst doc) {
     setMatchMethod(DocumentMatchMethod::FILENAME);
   }
   setSendMetadata(doc["sendMetadata"] | false);
+  setMatchOtherCopies(doc["matchOtherCopies"] | false);
 
   const JsonVariantConst behaviorValue = doc["syncBehavior"];
   const bool missingBehavior = behaviorValue.isNull();
@@ -142,6 +144,11 @@ void KOReaderCredentialStore::setMatchMethod(DocumentMatchMethod method) {
 void KOReaderCredentialStore::setSendMetadata(bool enabled) {
   sendMetadata = enabled;
   LOG_DBG("KRS", "Set send metadata: %s", enabled ? "true" : "false");
+}
+
+void KOReaderCredentialStore::setMatchOtherCopies(bool enabled) {
+  matchOtherCopies = enabled;
+  LOG_DBG("KRS", "Set match other copies: %s", enabled ? "true" : "false");
 }
 
 void KOReaderCredentialStore::setSyncBehavior(KOReaderSyncBehavior behavior) {

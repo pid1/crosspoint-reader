@@ -960,9 +960,10 @@ bool EpubReaderActivity::launchKOReaderSync() {
 
   // The identifier that describes the book rather than the file, taken while
   // the Epub is open: the sync activity runs with it released, and reloading it
-  // there would compete with the TLS handshake for heap.
+  // there would compete with the TLS handshake for heap. Only Match Other
+  // Copies puts it on the wire, and reading it costs an OPF parse.
   std::string structureDigest;
-  {
+  if (KOREADER_STORE.getMatchOtherCopies()) {
     KOReaderStructureDigest digest;
     if (epub->readStructureIdentity(digest)) {
       structureDigest = digest.finish();

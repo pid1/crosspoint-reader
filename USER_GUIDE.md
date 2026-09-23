@@ -331,7 +331,7 @@ The Settings screen allows you to configure the device's behavior. There are a f
 
 - **Wi-Fi Networks**: Connect to Wi-Fi networks for file transfers and firmware updates.
 
-- **KOReader Sync**: Options for setting up KOReader for syncing book progress. **Smart sync** is the default for new configurations and auto-resolves simple push/pull decisions. Existing credential files retain **Ask every time** when migrated; you can switch Sync Behavior at any time if you prefer manual confirmation.
+- **KOReader Sync**: Options for setting up KOReader for syncing book progress. **Smart sync** is the default for new configurations and auto-resolves simple push/pull decisions. Existing credential files retain **Ask every time** when migrated; you can switch Sync Behavior at any time if you prefer manual confirmation. **Match Other Copies** is off by default: it names each book by its layout as well as by its file, so a re-encoded or re-downloaded copy can find the place another copy stored. Only a server carrying [koreader-sync-server#55](https://github.com/koreader/koreader-sync-server/pull/55) reads those names; anywhere else the requests are unchanged. A place recovered this way is placed by percentage, and the sync screen labels it **Approximate: from another copy**.
 
 - **OPDS Servers**: Manage one or more OPDS [(Open Publication Distribution System)](https://en.wikipedia.org/wiki/Open_Publication_Distribution_System) libraries for browsing and downloading books. See [OPDS Servers (Multiple Libraries)](#365-opds-servers-multiple-libraries) below.
 

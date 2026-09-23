@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "KOReaderCredentialStore.h"
 #include "KOReaderSyncClient.h"
 #include "ProgressMapper.h"
 #include "activities/Activity.h"
@@ -88,6 +89,7 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
   void performSync();
   void performUpload();
   bool smartSyncEnabled() const;
+  void prepareIdentifiers(DocumentMatchMethod method);
   void markAutoReturn();
   void completeAlreadySynced();
   void ensureEpubLoaded();
