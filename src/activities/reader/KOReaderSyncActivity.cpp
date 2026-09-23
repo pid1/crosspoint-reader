@@ -50,17 +50,17 @@ const char* matchMethodType(const DocumentMatchMethod method) {
                                                  : KOReaderIdentifiers::TYPE_CONTENT;
 }
 
-// The other names this book answers to, in descending strength. [K-ID-8] puts
-// the configured document id first, because that is the `document` the request
-// addresses and an older client sending only it must reach the same record.
-// The alternate document id joins under smart sync, the mode that already asks
+// The other names this book answers to, in descending strength. The list is a
+// preference order ([K-ID-8b]) that has to contain the configured document id
+// ([K-ID-8]), and that id is the strongest name anyway, so it leads. The
+// alternate document id joins under smart sync, the mode that already asks
 // after both. Empty digests are dropped: a book whose OPF could not be read
 // simply offers fewer names.
 std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const DocumentMatchMethod method,
                                                  const std::string& documentHash, const std::string& structureDigest,
-                                                 const std::string& metadataDigest, const bool includeAlternateId) {
+                                                 const bool includeAlternateId) {
   std::vector<KOReaderIdentifier> identifiers;
-  identifiers.reserve(4);
+  identifiers.reserve(3);
 
   const auto append = [&identifiers](const char* type, const std::string& value) {
     if (value.empty() || identifiers.size() >= KOReaderIdentifiers::MAX_ENTRIES) return;
@@ -72,7 +72,6 @@ std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const 
     append(KOReaderIdentifiers::TYPE_CONTENT, KOReaderDocumentId::calculate(path));
   }
   append(KOReaderIdentifiers::TYPE_STRUCTURE, structureDigest);
-  append(KOReaderIdentifiers::TYPE_METADATA, metadataDigest);
   if (includeAlternateId && method != DocumentMatchMethod::FILENAME) {
     append(KOReaderIdentifiers::TYPE_FILENAME, KOReaderDocumentId::calculateFromFilename(path));
   }
@@ -84,13 +83,12 @@ std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const 
 KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            const std::string& epubPath, CrossPointPosition localPosition,
                                            SavedProgressPosition localKoPos, std::string localChapterName,
-                                           std::string metadataDigest, std::string structureDigest)
+                                           std::string structureDigest)
     : Activity("KOReaderSync", renderer, mappedInput),
       UiAppHost(renderer),
       epubPath(epubPath),
       localChapterName(std::move(localChapterName)),
       localPosition(localPosition),
-      metadataDigest(std::move(metadataDigest)),
       structureDigest(std::move(structureDigest)),
       remoteProgress{},
       remotePosition{},
@@ -187,8 +185,7 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
   const std::string primaryHash = documentHash;
-  identifiers =
-      buildIdentifiers(epubPath, primaryMethod, documentHash, structureDigest, metadataDigest, smartSyncEnabled());
+  identifiers = buildIdentifiers(epubPath, primaryMethod, documentHash, structureDigest, smartSyncEnabled());
 
   LOG_DBG("KOSync", "Document hash (%s): %s, %u identifiers", matchMethodName(primaryMethod), documentHash.c_str(),
           (unsigned)identifiers.size());
@@ -217,9 +214,9 @@ void KOReaderSyncActivity::performSync() {
     const std::string altHash = calculateDocumentHashForMethod(epubPath, altMethod);
     if (!altHash.empty() && altHash != documentHash) {
       KOReaderProgress altProgress;
-      // Addressed by its own digest alone: [K-ID-8] would reject a list led by
-      // anything else, and this request exists for servers that match on one id.
-      const auto altResult = KOReaderSyncClient::getProgress(altHash, {}, altProgress);
+      // [K-ID-8] asks the list to contain `document`, not to lead with it, and
+      // smart sync put the alternate id in it, so the probe carries the list.
+      const auto altResult = KOReaderSyncClient::getProgress(altHash, identifiers, altProgress);
       LOG_DBG("KOSync", "Alternate remote (%s): result=%d http=%d doc=%s local=%.6f remote=%.6f xpath=%s",
               matchMethodName(altMethod), altResult, KOReaderSyncClient::lastHttpCode, altHash.c_str(),
               localProgress.percentage, altProgress.percentage, altProgress.progress.c_str());
@@ -486,7 +483,7 @@ void KOReaderSyncActivity::startUpload() {
   if (documentHash.empty()) {
     const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
     documentHash = calculateDocumentHashForMethod(epubPath, method);
-    identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, metadataDigest, smartSyncEnabled());
+    identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, smartSyncEnabled());
   }
   performUpload();
 }

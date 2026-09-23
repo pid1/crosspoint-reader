@@ -50,6 +50,30 @@ bool Epub::findContentOpfFile(std::string* contentOpfFile, ZipFile* sharedZip) c
   return true;
 }
 
+bool Epub::readStructureIdentity(OpfStructureSink& sink) {
+  std::string contentOpfFilePath;
+  if (!findContentOpfFile(&contentOpfFilePath)) {
+    LOG_ERR("EBP", "Could not find content.opf for the structure identifier");
+    return false;
+  }
+
+  size_t contentOpfSize;
+  if (!getItemSize(contentOpfFilePath, &contentOpfSize)) {
+    LOG_ERR("EBP", "Could not get size of content.opf for the structure identifier");
+    return false;
+  }
+
+  // No metadata cache: this pass wants the manifest hrefs the OPF writes, and
+  // the spine cache holds them resolved against the OPF directory instead.
+  ContentOpfParser opfParser(getCachePath(), getBasePath(), contentOpfSize, nullptr, false, &sink);
+  if (!opfParser.setup()) {
+    LOG_ERR("EBP", "Could not setup content.opf parser for the structure identifier");
+    return false;
+  }
+
+  return readItemContentsToStream(contentOpfFilePath, opfParser, 1024);
+}
+
 bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const bool writeSpineEntries,
                            const bool metadataOnly, ZipFile* sharedZip) {
   std::string contentOpfFilePath;

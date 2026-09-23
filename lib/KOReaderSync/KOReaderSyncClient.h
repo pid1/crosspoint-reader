@@ -47,7 +47,7 @@ struct KOReaderProgress {
 
   // Optional multi-identifier matching (koreader-sync-server PR #55). Servers
   // without it answer as they always have and leave both match fields empty.
-  std::vector<KOReaderIdentifier> identifiers;  // Sent, strongest first, first value == document
+  std::vector<KOReaderIdentifier> identifiers;  // Sent, strongest first, one value equal to document
   std::string match;                            // Identifier type that found the record
   std::string progressMatch;                    // Strongest identifier shared with the writer of `progress`, or "none"
 };
@@ -97,8 +97,8 @@ class KOReaderSyncClient {
   /**
    * Get reading progress for a document.
    * @param documentHash The document hash (from KOReaderDocumentId)
-   * @param identifiers Other names for this document, strongest first; empty asks
-   *        the literal documentHash and nothing else
+   * @param identifiers Other names for this document, strongest first, one of them
+   *        equal to documentHash; empty asks the literal documentHash and nothing else
    * @param outProgress Output: the progress data
    * @return OK on success, NOT_FOUND if no progress exists, error code on failure
    */

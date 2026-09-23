@@ -53,31 +53,24 @@ void XMLCALL ContainerParser::startElement(void* userData, const XML_Char* name,
   auto* self = static_cast<ContainerParser*>(userData);
 
   // Simple state tracking to ensure we are looking at the valid schema structure
-  if (self->state == START && strcmp(name, "container") == 0) {
+  if (self->state == START && xmlLocalNameEquals(name, "container")) {
     self->state = IN_CONTAINER;
     return;
   }
 
-  if (self->state == IN_CONTAINER && strcmp(name, "rootfiles") == 0) {
+  if (self->state == IN_CONTAINER && xmlLocalNameEquals(name, "rootfiles")) {
     self->state = IN_ROOTFILES;
     return;
   }
 
-  if (self->state == IN_ROOTFILES && strcmp(name, "rootfile") == 0) {
-    const char* mediaType = nullptr;
-    const char* path = nullptr;
-
+  // The first rootfile, whatever its media-type: EPUB 3 makes it the default
+  // rendition, and kosync's structure identifier is defined over that one
+  // (SPEC.md §5.8). Its full-path is an archive member name as written.
+  if (self->state == IN_ROOTFILES && xmlLocalNameEquals(name, "rootfile") && self->fullPath.empty()) {
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "media-type") == 0) {
-        mediaType = atts[i + 1];
-      } else if (strcmp(atts[i], "full-path") == 0) {
-        path = atts[i + 1];
+      if (strcmp(atts[i], "full-path") == 0) {
+        self->fullPath = atts[i + 1];
       }
-    }
-
-    // Check if this is the standard OEBPS package
-    if (mediaType && path && strcmp(mediaType, "application/oebps-package+xml") == 0) {
-      self->fullPath = path;
     }
   }
 }
@@ -85,9 +78,9 @@ void XMLCALL ContainerParser::startElement(void* userData, const XML_Char* name,
 void XMLCALL ContainerParser::endElement(void* userData, const XML_Char* name) {
   auto* self = static_cast<ContainerParser*>(userData);
 
-  if (self->state == IN_ROOTFILES && strcmp(name, "rootfiles") == 0) {
+  if (self->state == IN_ROOTFILES && xmlLocalNameEquals(name, "rootfiles")) {
     self->state = IN_CONTAINER;
-  } else if (self->state == IN_CONTAINER && strcmp(name, "container") == 0) {
+  } else if (self->state == IN_CONTAINER && xmlLocalNameEquals(name, "container")) {
     self->state = START;
   }
 }

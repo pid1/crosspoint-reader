@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Epub.h"
+#include "OpfStructureSink.h"
 #include "expat.h"
 
 class BookMetadataCache;
@@ -18,6 +19,7 @@ class ContentOpfParser final : public Print {
     IN_BOOK_TITLE,
     IN_BOOK_AUTHOR,
     IN_BOOK_LANGUAGE,
+    IN_BOOK_IDENTIFIER,
     IN_MANIFEST,
     IN_SPINE,
     IN_GUIDE,
@@ -30,6 +32,7 @@ class ContentOpfParser final : public Print {
   ParserState state = START;
   BookMetadataCache* cache;
   const bool metadataOnly;
+  OpfStructureSink* structureSink;
   bool metadataComplete = false;
   HalFile tempItemStore;
   std::string coverItemId;
@@ -39,6 +42,24 @@ class ContentOpfParser final : public Print {
   // separation as element state rather than inferring either from callbacks.
   bool metadataSpacePending = false;
   bool authorSeparatorPending = false;
+
+  // The `<package unique-identifier>` attribute and the `dc:identifier`
+  // elements it selects between. Held verbatim: the structure recipe trims the
+  // chosen one and takes it as written, so neither is folded or collapsed.
+  std::string uniqueIdentifierRef;
+  std::string identifierElementId;
+  std::string identifierText;
+  std::string packageIdentifier;
+  std::string firstIdentifier;
+  bool hasPackageIdentifier = false;
+  bool hasFirstIdentifier = false;
+  bool packageIdentifierEmitted = false;
+
+  // expat resolves `&amp;` in an attribute value; the recipe wants the five
+  // characters the OPF wrote. XML_DefaultCurrent replays the current element's
+  // markup verbatim into the default handler, which lands here.
+  std::string rawMarkup;
+  bool capturingRawMarkup = false;
 
   // Index for fast idref→href lookup (binary search over .items.bin)
   struct ItemIndexEntry {
@@ -59,9 +80,16 @@ class ContentOpfParser final : public Print {
     return hash;
   }
 
+  // The manifest is spilled to `.items.bin` whenever a consumer needs an
+  // idref resolved: the spine cache, the structure digest, or both.
+  bool wantsManifestItems() const { return cache != nullptr || structureSink != nullptr; }
+  void emitPackageIdentifier();
+  std::string rawHrefOfCurrentElement();
+
   static void startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void characterData(void* userData, const XML_Char* s, int len);
   static void endElement(void* userData, const XML_Char* name);
+  static void defaultHandler(void* userData, const XML_Char* s, int len);
 
  public:
   std::string title;
@@ -75,12 +103,14 @@ class ContentOpfParser final : public Print {
   std::vector<std::string> cssFiles;  // CSS stylesheet paths
 
   explicit ContentOpfParser(const std::string& cachePath, const std::string& baseContentPath, const size_t xmlSize,
-                            BookMetadataCache* cache, const bool metadataOnly = false)
+                            BookMetadataCache* cache, const bool metadataOnly = false,
+                            OpfStructureSink* structureSink = nullptr)
       : cachePath(cachePath),
         baseContentPath(baseContentPath),
         remainingSize(xmlSize),
         cache(cache),
-        metadataOnly(metadataOnly) {}
+        metadataOnly(metadataOnly),
+        structureSink(structureSink) {}
   ~ContentOpfParser() override;
 
   bool setup();

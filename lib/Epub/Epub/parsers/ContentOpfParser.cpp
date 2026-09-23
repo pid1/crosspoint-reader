@@ -7,6 +7,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <string_view>
 
 #include "Epub/BookMetadataCache.h"
 
@@ -64,6 +65,48 @@ void appendMetadataText(std::string& out, const XML_Char* text, const int len, b
     out.push_back(c);
   }
 }
+
+// dc:identifier text reaches the digest as written, so it is accumulated
+// verbatim rather than through appendMetadataText's whitespace collapsing.
+void appendIdentifierText(std::string& out, const XML_Char* text, const int len) {
+  const size_t room = MAX_METADATA_TEXT - std::min(out.size(), MAX_METADATA_TEXT);
+  out.append(text, std::min(static_cast<size_t>(len), room));
+}
+
+std::string_view trimmed(const std::string& text) {
+  size_t begin = 0;
+  size_t end = text.size();
+  while (begin < end && isXmlWhitespace(text[begin])) begin++;
+  while (end > begin && isXmlWhitespace(text[end - 1])) end--;
+  return std::string_view{text}.substr(begin, end - begin);
+}
+
+// A fragment addresses a place inside the file, not the file, so the recipe
+// drops it. Everything before it stays exactly as the attribute wrote it.
+std::string_view hrefWithoutFragment(std::string_view href) {
+  const size_t hash = href.find('#');
+  return hash == std::string_view::npos ? href : href.substr(0, hash);
+}
+
+// One attribute's value out of a start tag's own markup, delimiters excluded
+// and entity references left standing. The name has to be a whole token, so
+// `xlink:href` and `data-href` do not answer to `href`.
+std::string_view rawAttributeValue(const std::string_view markup, const std::string_view name) {
+  for (size_t at = markup.find(name, 1); at != std::string_view::npos; at = markup.find(name, at + 1)) {
+    if (!isXmlWhitespace(markup[at - 1])) continue;
+    size_t cursor = at + name.size();
+    while (cursor < markup.size() && isXmlWhitespace(markup[cursor])) cursor++;
+    if (cursor >= markup.size() || markup[cursor] != '=') continue;
+    cursor++;
+    while (cursor < markup.size() && isXmlWhitespace(markup[cursor])) cursor++;
+    if (cursor >= markup.size() || (markup[cursor] != '"' && markup[cursor] != '\'')) continue;
+    const char quote = markup[cursor++];
+    const size_t end = markup.find(quote, cursor);
+    if (end == std::string_view::npos) break;
+    return markup.substr(cursor, end - cursor);
+  }
+  return {};
+}
 }  // namespace
 
 bool ContentOpfParser::setup() {
@@ -76,12 +119,30 @@ bool ContentOpfParser::setup() {
   XML_SetUserData(parser, this);
   XML_SetElementHandler(parser, startElement, endElement);
   XML_SetCharacterDataHandler(parser, characterData);
+  if (structureSink) {
+    XML_SetDefaultHandler(parser, defaultHandler);
+  }
   return true;
+}
+
+void XMLCALL ContentOpfParser::defaultHandler(void* userData, const XML_Char* s, const int len) {
+  auto* self = static_cast<ContentOpfParser*>(userData);
+  if (self->capturingRawMarkup) {
+    self->rawMarkup.append(s, len);
+  }
+}
+
+std::string ContentOpfParser::rawHrefOfCurrentElement() {
+  rawMarkup.clear();
+  capturingRawMarkup = true;
+  XML_DefaultCurrent(parser);
+  capturingRawMarkup = false;
+  return std::string{hrefWithoutFragment(rawAttributeValue(rawMarkup, "href"))};
 }
 
 ContentOpfParser::~ContentOpfParser() {
   destroyXmlParser(parser);
-  if (metadataOnly || !cache) {
+  if (metadataOnly || !wantsManifestItems()) {
     return;
   }
   if (tempItemStore) {
@@ -148,6 +209,11 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   if (self->state == START && xmlLocalNameEquals(name, "package")) {
     self->state = IN_PACKAGE;
+    for (int i = 0; atts[i]; i += 2) {
+      if (strcmp(atts[i], "unique-identifier") == 0) {
+        self->uniqueIdentifierRef = atts[i + 1];
+      }
+    }
     return;
   }
 
@@ -178,9 +244,22 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
+  if (self->state == IN_METADATA && xmlLocalNameEquals(name, "identifier")) {
+    self->state = IN_BOOK_IDENTIFIER;
+    self->identifierElementId.clear();
+    self->identifierText.clear();
+    for (int i = 0; atts[i]; i += 2) {
+      if (strcmp(atts[i], "id") == 0) {
+        self->identifierElementId = atts[i + 1];
+      }
+    }
+    return;
+  }
+
   if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "manifest")) {
     self->state = IN_MANIFEST;
-    if (self->cache && !Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
+    if (self->wantsManifestItems() &&
+        !Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for writing. This is probably going to be a fatal error.");
     }
     return;
@@ -188,9 +267,11 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
   if (self->state == IN_PACKAGE && xmlLocalNameEquals(name, "spine")) {
     self->state = IN_SPINE;
-    if (self->cache && !Storage.openFileForRead("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
+    if (self->wantsManifestItems() &&
+        !Storage.openFileForRead("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
       LOG_ERR("COF", "Couldn't open temp items file for reading. This is probably going to be a fatal error.");
     }
+    self->emitPackageIdentifier();
 
     // Sort the (unconditionally-built) item index so every idref lookup uses binary
     // search. Without this, small/medium manifests fell back to an O(spine × manifest)
@@ -239,6 +320,11 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     std::string mediaType;
     std::string properties;
 
+    // The attribute as written, which is what the structure recipe hashes:
+    // percent escapes and entity references intact, no OPF directory, no
+    // normalisation.
+    const std::string rawHref = self->structureSink ? self->rawHrefOfCurrentElement() : std::string{};
+
     for (int i = 0; atts[i]; i += 2) {
       if (strcmp(atts[i], "id") == 0) {
         itemId = atts[i + 1];
@@ -263,6 +349,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     if (self->tempItemStore) {
       serialization::writeString(self->tempItemStore, itemId);
       serialization::writeString(self->tempItemStore, href);
+      if (self->structureSink) {
+        serialization::writeString(self->tempItemStore, rawHref);
+      }
     }
 
     if (itemId == self->coverItemId) {
@@ -309,13 +398,14 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   }
 
   // NOTE: This relies on spine appearing after item manifest (which is pretty safe as it's part of the EPUB spec)
-  // Only run the spine parsing if there's a cache to add it to
-  if (self->cache) {
+  // Only resolve idrefs when something consumes them
+  if (self->wantsManifestItems()) {
     if (self->state == IN_SPINE && xmlLocalNameEquals(name, "itemref")) {
       for (int i = 0; atts[i]; i += 2) {
         if (strcmp(atts[i], "idref") == 0) {
           const std::string idref = atts[i + 1];
           std::string href;
+          std::string rawHref;
           bool found = false;
 
           if (self->useItemIndex) {
@@ -336,6 +426,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
               serialization::readString(self->tempItemStore, itemId);
               if (itemId == idref) {
                 serialization::readString(self->tempItemStore, href);
+                if (self->structureSink) {
+                  serialization::readString(self->tempItemStore, rawHref);
+                }
                 found = true;
                 break;
               }
@@ -349,6 +442,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
             while (self->tempItemStore.available()) {
               serialization::readString(self->tempItemStore, itemId);
               serialization::readString(self->tempItemStore, href);
+              if (self->structureSink) {
+                serialization::readString(self->tempItemStore, rawHref);
+              }
               if (itemId == idref) {
                 found = true;
                 break;
@@ -358,6 +454,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
 
           if (found && self->cache) {
             self->cache->createSpineEntry(href);
+          }
+          if (found && self->structureSink) {
+            self->structureSink->addSpineHref(rawHref.data(), rawHref.size());
           }
         }
       }
@@ -413,6 +512,21 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     appendMetadataText(self->language, s, len, self->metadataSpacePending);
     return;
   }
+
+  if (self->state == IN_BOOK_IDENTIFIER) {
+    appendIdentifierText(self->identifierText, s, len);
+    return;
+  }
+}
+
+void ContentOpfParser::emitPackageIdentifier() {
+  if (!structureSink || packageIdentifierEmitted) {
+    return;
+  }
+  packageIdentifierEmitted = true;
+  const std::string& chosen = hasPackageIdentifier ? packageIdentifier : firstIdentifier;
+  const std::string_view line = trimmed(chosen);
+  structureSink->setPackageIdentifier(line.data(), line.size());
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -453,6 +567,23 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
 
   if (self->state == IN_BOOK_LANGUAGE && xmlLocalNameEquals(name, "language")) {
     self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_IDENTIFIER && xmlLocalNameEquals(name, "identifier")) {
+    self->state = IN_METADATA;
+    if (!self->hasFirstIdentifier) {
+      self->hasFirstIdentifier = true;
+      self->firstIdentifier = self->identifierText;
+    }
+    // `unique-identifier` names an id, so an element without one cannot be it,
+    // and an OPF that names nothing falls through to the first identifier.
+    if (!self->hasPackageIdentifier && !self->uniqueIdentifierRef.empty() &&
+        self->identifierElementId == self->uniqueIdentifierRef) {
+      self->hasPackageIdentifier = true;
+      self->packageIdentifier = self->identifierText;
+    }
+    self->identifierText.clear();
     return;
   }
 
