@@ -4208,12 +4208,22 @@ function stripFontEncryptionEntries(xmlText, fontPaths) {
 }
 
 /**
- * Fix OPF content: fix media-types, strip svg properties,
- * update split image manifest entries, remove stripped font
+ * Fix OPF content: point hrefs at converted images, fix media-types, strip svg
+ * properties, update split image manifest entries, remove stripped font
  * entries, ensure cover meta. DOMParser with regex fallback.
+ *
+ * `renamed` maps an archive path to its converted path. Only an href that
+ * resolves to one of those paths is rewritten: an image basename also occurring
+ * in a `dc:identifier`, a title, an id or another entry's href names something
+ * else, and rewriting it there breaks the OPF.
  */
-function fixOPF(opfText, opfOriginal, opfDir, splitImages = {}, fontPaths = null) {
+function fixOPF(opfText, opfOriginal, opfDir, splitImages = {}, fontPaths = null, renamed = null) {
   let t = opfText;
+
+  const renamedPaths = new Set(Object.keys(renamed || {}));
+  const opfBase = (opfDir ? opfDir + '/' : '') + 'x';
+  const namesConverted = href => renamedPaths.has(resolvePath(opfBase, decodeHref(href)));
+  const toJpg = href => href.replace(/\.(png|gif|webp|bmp|jpeg)$/i, '.jpg');
 
   try {
     const parser = new DOMParser();
@@ -4222,6 +4232,14 @@ function fixOPF(opfText, opfOriginal, opfDir, splitImages = {}, fontPaths = null
 
     const items = [...doc.getElementsByTagNameNS('*', 'item')];
     const manifestEl = doc.getElementsByTagNameNS('*', 'manifest')[0];
+
+    // Point hrefs at the converted images
+    if (renamedPaths.size) {
+      for (const el of [...doc.getElementsByTagName('*')]) {
+        const href = el.getAttribute('href');
+        if (href && namesConverted(href)) el.setAttribute('href', toJpg(href));
+      }
+    }
 
     // Fix media-types for converted images
     for (const item of items) {
@@ -4283,6 +4301,10 @@ function fixOPF(opfText, opfOriginal, opfDir, splitImages = {}, fontPaths = null
     t = safeSerialize(doc, opfOriginal);
   } catch (e) {
     // Regex fallback
+    if (renamedPaths.size) {
+      t = t.replace(/(\bhref\s*=\s*)(["'])([^"']*)\2/gi,
+        (m, pre, q, href) => (namesConverted(href) ? pre + q + toJpg(href) + q : m));
+    }
     t = t.replace(/(<(?:\w+:)?item\b[^>]*href="[^"]+\.jpg"[^>]*)media-type="image\/(png|gif|webp|bmp)"/g, '$1media-type="image/jpeg"');
     t = t.replace(/(<(?:\w+:)?item\b[^>]*)media-type="image\/(png|gif|webp|bmp)"([^>]*href="[^"]+\.jpg")/g, '$1media-type="image/jpeg"$3');
     t = t.replace(/\s+svg(?=["'\s>])/g, '');
@@ -5370,12 +5392,8 @@ async function convertEpubFile(file, progressCallback) {
 
   // Third pass: update OPF using fixOPF (DOMParser with regex fallback)
   if (opfContent) {
-    let t = opfContent;
-    for (const [o, n] of Object.entries(renamed)) {
-      t = t.split(o.split('/').pop()).join(n.split('/').pop());
-    }
     const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/')) : '';
-    t = fixOPF(t, opfContent, opfDir, splitImages, fontPaths);
+    const t = fixOPF(opfContent, opfContent, opfDir, splitImages, fontPaths, renamed);
     if (t !== opfContent) logFix('OPF', 'manifest updated');
     out.file(opfPath, t, { compression: 'DEFLATE', compressionOptions: { level: 8 }, createFolders: false });
   }
