@@ -45,20 +45,24 @@ const char* matchMethodName(const DocumentMatchMethod method) {
   return method == DocumentMatchMethod::FILENAME ? "filename" : "binary";
 }
 
-const char* matchMethodType(const DocumentMatchMethod method) {
-  return method == DocumentMatchMethod::FILENAME ? KOReaderIdentifiers::TYPE_FILENAME
-                                                 : KOReaderIdentifiers::TYPE_CONTENT;
-}
-
-// The other names this book answers to, in descending strength. The list is a
-// preference order ([K-ID-8b]) that has to contain the configured document id
-// ([K-ID-8]), and that id is the strongest name anyway, so it leads. The
-// alternate document id joins under smart sync, the mode that already asks
-// after both. Empty digests are dropped: a book whose OPF could not be read
-// simply offers fewer names.
+// The other names this book answers to. [K-ID-5b] requires descending
+// strength, and [K-ID-12b] is why: the server registers nothing ranked above
+// the entry that matched, so a list opening with its weakest name glues the
+// strong ones to a guess. [K-ID-8] is satisfied by containing the configured
+// document id, not by leading with it ([K-ID-8b]) — under filename matching
+// that id is the weakest name and goes last. The alternate document id is
+// computed under smart sync, the mode that already asks after both. Empty
+// digests are dropped: a book whose OPF could not be read offers fewer names.
 std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const DocumentMatchMethod method,
                                                  const std::string& documentHash, const std::string& structureDigest,
                                                  const bool includeAlternateId) {
+  const bool matchesOnFilename = method == DocumentMatchMethod::FILENAME;
+  const std::string contentDigest =
+      matchesOnFilename ? (includeAlternateId ? KOReaderDocumentId::calculate(path) : std::string{}) : documentHash;
+  const std::string filenameDigest =
+      matchesOnFilename ? documentHash
+                        : (includeAlternateId ? KOReaderDocumentId::calculateFromFilename(path) : std::string{});
+
   std::vector<KOReaderIdentifier> identifiers;
   identifiers.reserve(3);
 
@@ -67,14 +71,9 @@ std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const 
     identifiers.push_back({type, value});
   };
 
-  append(matchMethodType(method), documentHash);
-  if (includeAlternateId && method == DocumentMatchMethod::FILENAME) {
-    append(KOReaderIdentifiers::TYPE_CONTENT, KOReaderDocumentId::calculate(path));
-  }
+  append(KOReaderIdentifiers::TYPE_CONTENT, contentDigest);
   append(KOReaderIdentifiers::TYPE_STRUCTURE, structureDigest);
-  if (includeAlternateId && method != DocumentMatchMethod::FILENAME) {
-    append(KOReaderIdentifiers::TYPE_FILENAME, KOReaderDocumentId::calculateFromFilename(path));
-  }
+  append(KOReaderIdentifiers::TYPE_FILENAME, filenameDigest);
   return identifiers;
 }
 

@@ -66,8 +66,8 @@ void appendMetadataText(std::string& out, const XML_Char* text, const int len, b
   }
 }
 
-// dc:identifier text reaches the digest as written, so it is accumulated
-// verbatim rather than through appendMetadataText's whitespace collapsing.
+// dc:identifier text reaches the digest with only its ends trimmed, so it is
+// accumulated whole rather than through appendMetadataText's collapsing.
 void appendIdentifierText(std::string& out, const XML_Char* text, const int len) {
   const size_t room = MAX_METADATA_TEXT - std::min(out.size(), MAX_METADATA_TEXT);
   out.append(text, std::min(static_cast<size_t>(len), room));
@@ -82,31 +82,13 @@ std::string_view trimmed(const std::string& text) {
 }
 
 // A fragment addresses a place inside the file, not the file, so the recipe
-// drops it. Everything before it stays exactly as the attribute wrote it.
+// drops it. What is left is the attribute as the parser yields it: entity
+// references expanded, percent escapes intact, no OPF directory in front.
 std::string_view hrefWithoutFragment(std::string_view href) {
   const size_t hash = href.find('#');
   return hash == std::string_view::npos ? href : href.substr(0, hash);
 }
 
-// One attribute's value out of a start tag's own markup, delimiters excluded
-// and entity references left standing. The name has to be a whole token, so
-// `xlink:href` and `data-href` do not answer to `href`.
-std::string_view rawAttributeValue(const std::string_view markup, const std::string_view name) {
-  for (size_t at = markup.find(name, 1); at != std::string_view::npos; at = markup.find(name, at + 1)) {
-    if (!isXmlWhitespace(markup[at - 1])) continue;
-    size_t cursor = at + name.size();
-    while (cursor < markup.size() && isXmlWhitespace(markup[cursor])) cursor++;
-    if (cursor >= markup.size() || markup[cursor] != '=') continue;
-    cursor++;
-    while (cursor < markup.size() && isXmlWhitespace(markup[cursor])) cursor++;
-    if (cursor >= markup.size() || (markup[cursor] != '"' && markup[cursor] != '\'')) continue;
-    const char quote = markup[cursor++];
-    const size_t end = markup.find(quote, cursor);
-    if (end == std::string_view::npos) break;
-    return markup.substr(cursor, end - cursor);
-  }
-  return {};
-}
 }  // namespace
 
 bool ContentOpfParser::setup() {
@@ -119,25 +101,7 @@ bool ContentOpfParser::setup() {
   XML_SetUserData(parser, this);
   XML_SetElementHandler(parser, startElement, endElement);
   XML_SetCharacterDataHandler(parser, characterData);
-  if (structureSink) {
-    XML_SetDefaultHandler(parser, defaultHandler);
-  }
   return true;
-}
-
-void XMLCALL ContentOpfParser::defaultHandler(void* userData, const XML_Char* s, const int len) {
-  auto* self = static_cast<ContentOpfParser*>(userData);
-  if (self->capturingRawMarkup) {
-    self->rawMarkup.append(s, len);
-  }
-}
-
-std::string ContentOpfParser::rawHrefOfCurrentElement() {
-  rawMarkup.clear();
-  capturingRawMarkup = true;
-  XML_DefaultCurrent(parser);
-  capturingRawMarkup = false;
-  return std::string{hrefWithoutFragment(rawAttributeValue(rawMarkup, "href"))};
 }
 
 ContentOpfParser::~ContentOpfParser() {
@@ -320,15 +284,16 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     std::string mediaType;
     std::string properties;
 
-    // The attribute as written, which is what the structure recipe hashes:
-    // percent escapes and entity references intact, no OPF directory, no
-    // normalisation.
-    const std::string rawHref = self->structureSink ? self->rawHrefOfCurrentElement() : std::string{};
+    // The href the structure recipe hashes. The resolved one beside it is
+    // percent-decoded and carries the OPF directory, all of which the recipe
+    // forbids, so the two cannot be the same string.
+    std::string structureHref;
 
     for (int i = 0; atts[i]; i += 2) {
       if (strcmp(atts[i], "id") == 0) {
         itemId = atts[i + 1];
       } else if (strcmp(atts[i], "href") == 0) {
+        structureHref = hrefWithoutFragment(atts[i + 1]);
         href = FsHelpers::normalisePath(FsHelpers::decodeUriEscapes(self->baseContentPath + atts[i + 1]));
       } else if (strcmp(atts[i], "media-type") == 0) {
         mediaType = atts[i + 1];
@@ -350,7 +315,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
       serialization::writeString(self->tempItemStore, itemId);
       serialization::writeString(self->tempItemStore, href);
       if (self->structureSink) {
-        serialization::writeString(self->tempItemStore, rawHref);
+        serialization::writeString(self->tempItemStore, structureHref);
       }
     }
 
@@ -405,7 +370,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
         if (strcmp(atts[i], "idref") == 0) {
           const std::string idref = atts[i + 1];
           std::string href;
-          std::string rawHref;
+          std::string structureHref;
           bool found = false;
 
           if (self->useItemIndex) {
@@ -427,7 +392,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
               if (itemId == idref) {
                 serialization::readString(self->tempItemStore, href);
                 if (self->structureSink) {
-                  serialization::readString(self->tempItemStore, rawHref);
+                  serialization::readString(self->tempItemStore, structureHref);
                 }
                 found = true;
                 break;
@@ -443,7 +408,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
               serialization::readString(self->tempItemStore, itemId);
               serialization::readString(self->tempItemStore, href);
               if (self->structureSink) {
-                serialization::readString(self->tempItemStore, rawHref);
+                serialization::readString(self->tempItemStore, structureHref);
               }
               if (itemId == idref) {
                 found = true;
@@ -455,8 +420,9 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
           if (found && self->cache) {
             self->cache->createSpineEntry(href);
           }
-          if (found && self->structureSink) {
-            self->structureSink->addSpineHref(rawHref.data(), rawHref.size());
+          // An item carrying no href describes no file, so it contributes no line.
+          if (found && self->structureSink && !structureHref.empty()) {
+            self->structureSink->addSpineHref(structureHref.data(), structureHref.size());
           }
         }
       }
@@ -524,9 +490,10 @@ void ContentOpfParser::emitPackageIdentifier() {
     return;
   }
   packageIdentifierEmitted = true;
-  const std::string& chosen = hasPackageIdentifier ? packageIdentifier : firstIdentifier;
-  const std::string_view line = trimmed(chosen);
-  structureSink->setPackageIdentifier(line.data(), line.size());
+  // The named identifier when it has a value, and the first identifier that
+  // has one when it does not: an empty match is no answer.
+  const std::string& chosen = packageIdentifier.empty() ? firstNonEmptyIdentifier : packageIdentifier;
+  structureSink->setPackageIdentifier(chosen.data(), chosen.size());
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -572,16 +539,16 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
 
   if (self->state == IN_BOOK_IDENTIFIER && xmlLocalNameEquals(name, "identifier")) {
     self->state = IN_METADATA;
-    if (!self->hasFirstIdentifier) {
-      self->hasFirstIdentifier = true;
-      self->firstIdentifier = self->identifierText;
+    const std::string_view value = trimmed(self->identifierText);
+    if (self->firstNonEmptyIdentifier.empty()) {
+      self->firstNonEmptyIdentifier = value;
     }
-    // `unique-identifier` names an id, so an element without one cannot be it,
-    // and an OPF that names nothing falls through to the first identifier.
+    // `unique-identifier` names an id, so an element without one cannot be it.
+    // Several elements may carry that id; the first of them answers.
     if (!self->hasPackageIdentifier && !self->uniqueIdentifierRef.empty() &&
         self->identifierElementId == self->uniqueIdentifierRef) {
       self->hasPackageIdentifier = true;
-      self->packageIdentifier = self->identifierText;
+      self->packageIdentifier = value;
     }
     self->identifierText.clear();
     return;

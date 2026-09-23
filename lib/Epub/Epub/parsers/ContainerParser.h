@@ -15,6 +15,7 @@ class ContainerParser final : public Print {
   size_t remainingSize;
   XML_Parser parser = nullptr;
   ParserState state = START;
+  bool hasPackageRootfile = false;
 
   static void startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void endElement(void* userData, const XML_Char* name);

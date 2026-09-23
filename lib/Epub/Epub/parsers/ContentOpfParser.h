@@ -44,22 +44,15 @@ class ContentOpfParser final : public Print {
   bool authorSeparatorPending = false;
 
   // The `<package unique-identifier>` attribute and the `dc:identifier`
-  // elements it selects between. Held verbatim: the structure recipe trims the
-  // chosen one and takes it as written, so neither is folded or collapsed.
+  // elements it selects between. Trimmed of XML whitespace and nothing else;
+  // the structure recipe folds and collapses neither.
   std::string uniqueIdentifierRef;
   std::string identifierElementId;
   std::string identifierText;
   std::string packageIdentifier;
-  std::string firstIdentifier;
+  std::string firstNonEmptyIdentifier;
   bool hasPackageIdentifier = false;
-  bool hasFirstIdentifier = false;
   bool packageIdentifierEmitted = false;
-
-  // expat resolves `&amp;` in an attribute value; the recipe wants the five
-  // characters the OPF wrote. XML_DefaultCurrent replays the current element's
-  // markup verbatim into the default handler, which lands here.
-  std::string rawMarkup;
-  bool capturingRawMarkup = false;
 
   // Index for fast idref→href lookup (binary search over .items.bin)
   struct ItemIndexEntry {
@@ -84,12 +77,10 @@ class ContentOpfParser final : public Print {
   // idref resolved: the spine cache, the structure digest, or both.
   bool wantsManifestItems() const { return cache != nullptr || structureSink != nullptr; }
   void emitPackageIdentifier();
-  std::string rawHrefOfCurrentElement();
 
   static void startElement(void* userData, const XML_Char* name, const XML_Char** atts);
   static void characterData(void* userData, const XML_Char* s, int len);
   static void endElement(void* userData, const XML_Char* name);
-  static void defaultHandler(void* userData, const XML_Char* s, int len);
 
  public:
   std::string title;
