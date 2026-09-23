@@ -3,6 +3,10 @@
 #include <Logging.h>
 #include <XmlParserUtils.h>
 
+namespace {
+constexpr char MEDIA_TYPE_PACKAGE[] = "application/oebps-package+xml";
+}  // namespace
+
 bool ContainerParser::setup() {
   parser = XML_ParserCreate(nullptr);
   if (!parser) {
@@ -63,14 +67,30 @@ void XMLCALL ContainerParser::startElement(void* userData, const XML_Char* name,
     return;
   }
 
-  // The first rootfile, whatever its media-type: EPUB 3 makes it the default
-  // rendition, and kosync's structure identifier is defined over that one
-  // (SPEC.md §5.8). Its full-path is an archive member name as written.
-  if (self->state == IN_ROOTFILES && xmlLocalNameEquals(name, "rootfile") && self->fullPath.empty()) {
+  // The first rootfile declaring the package media-type, and the first of any
+  // type when none declares it. EPUB 3 makes the first declared one the default
+  // rendition, which is what kosync's structure identifier is taken over
+  // (SPEC.md §5.8).
+  if (self->state == IN_ROOTFILES && xmlLocalNameEquals(name, "rootfile") && !self->hasPackageRootfile) {
+    const char* mediaType = nullptr;
+    const char* path = nullptr;
+
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "full-path") == 0) {
-        self->fullPath = atts[i + 1];
+      if (strcmp(atts[i], "media-type") == 0) {
+        mediaType = atts[i + 1];
+      } else if (strcmp(atts[i], "full-path") == 0) {
+        path = atts[i + 1];
       }
+    }
+
+    if (!path) {
+      return;
+    }
+    if (mediaType && strcmp(mediaType, MEDIA_TYPE_PACKAGE) == 0) {
+      self->fullPath = path;
+      self->hasPackageRootfile = true;
+    } else if (self->fullPath.empty()) {
+      self->fullPath = path;
     }
   }
 }

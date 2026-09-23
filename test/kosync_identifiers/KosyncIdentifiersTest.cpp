@@ -33,6 +33,13 @@ std::string md5Of(const std::string& text) {
   return md5.toString();
 }
 
+std::string rootfileOf(const std::string& container) {
+  ContainerParser parser(container.size());
+  EXPECT_TRUE(parser.setup());
+  parser.write(reinterpret_cast<const uint8_t*>(container.data()), container.size());
+  return parser.fullPath;
+}
+
 std::string leavesDir() { return std::string(FIXTURE_DIR) + "/leaves"; }
 std::string julietDir() { return std::string(FIXTURE_DIR) + "/juliet"; }
 
@@ -95,19 +102,53 @@ TEST(StructureDigest, FallsBackToTheFirstIdentifierWhenNoneIsNamed) {
   EXPECT_EQ(digestOf(withIds), md5Of("urn:uuid:first\nch1.xhtml"));
 }
 
+TEST(StructureDigest, FallsBackWhenTheNamedIdentifierIsEmpty) {
+  const std::string metadata = R"(<dc:identifier id="pid">   </dc:identifier>)"
+                               R"(<dc:identifier></dc:identifier>)"
+                               R"(<dc:identifier>urn:uuid:usable</dc:identifier>)";
+  const std::string xml =
+      opf(R"(unique-identifier="pid")", R"(<item id="a" href="ch1.xhtml"/>)", R"(<itemref idref="a"/>)");
+  const std::string withIds = xml.substr(0, xml.find("<dc:title>")) + metadata + xml.substr(xml.find("<dc:title>"));
+
+  EXPECT_EQ(digestOf(withIds), md5Of("urn:uuid:usable\nch1.xhtml"));
+}
+
+TEST(StructureDigest, TakesTheFirstOfSeveralElementsCarryingTheNamedId) {
+  const std::string metadata = R"(<dc:identifier id="pid">urn:uuid:one</dc:identifier>)"
+                               R"(<dc:identifier id="pid">urn:uuid:two</dc:identifier>)";
+  const std::string xml =
+      opf(R"(unique-identifier="pid")", R"(<item id="a" href="ch1.xhtml"/>)", R"(<itemref idref="a"/>)");
+  const std::string withIds = xml.substr(0, xml.find("<dc:title>")) + metadata + xml.substr(xml.find("<dc:title>"));
+
+  EXPECT_EQ(digestOf(withIds), md5Of("urn:uuid:one\nch1.xhtml"));
+}
+
 TEST(StructureDigest, OmitsTheIdentifierLineWhenThereIsNone) {
   const std::string xml = opf("", R"(<item id="a" href="ch1.xhtml"/>)", R"(<itemref idref="a"/>)");
   EXPECT_EQ(digestOf(xml), md5Of("ch1.xhtml"));
 }
 
-TEST(StructureDigest, KeepsTheHrefExactlyAsWritten) {
+// Percent escapes, the OPF-relative directory and the fragment are the
+// recipe's business; entity references are the parser's, and it expands them.
+TEST(StructureDigest, KeepsTheHrefTheParserYields) {
   const std::string xml = opf("",
                               R"(<item id="a" href="Text/a%20b.xhtml"/>)"
                               R"(<item id="b" href="Text/c&amp;d.xhtml"/>)"
                               R"(<item id="c" href="../Text/e.xhtml#part2"/>)",
                               R"(<itemref idref="a"/><itemref idref="b"/><itemref idref="c"/>)");
 
-  EXPECT_EQ(digestOf(xml), md5Of("Text/a%20b.xhtml\nText/c&amp;d.xhtml\n../Text/e.xhtml"));
+  EXPECT_EQ(digestOf(xml), md5Of("Text/a%20b.xhtml\nText/c&d.xhtml\n../Text/e.xhtml"));
+  EXPECT_EQ(digestOf(xml), "e07ad0e2e24fbaa64b0c40a8b1ebb13f");
+}
+
+TEST(StructureDigest, ExpandsEntityReferencesInTheIdentifierToo) {
+  const std::string metadata = R"(<dc:identifier id="pid">urn:a&amp;b&#58;1</dc:identifier>)";
+  const std::string xml =
+      opf(R"(unique-identifier="pid")", R"(<item id="a" href="ch1.xhtml"/>)", R"(<itemref idref="a"/>)");
+  const std::string withId = xml.substr(0, xml.find("<dc:title>")) + metadata + xml.substr(xml.find("<dc:title>"));
+
+  EXPECT_EQ(digestOf(withId), md5Of("urn:a&b:1\nch1.xhtml"));
+  EXPECT_EQ(digestOf(withId), "fb3ed76af6e07f28456616a77330b19f");
 }
 
 TEST(StructureDigest, MatchesElementsOnTheirLocalName) {
@@ -123,6 +164,13 @@ TEST(StructureDigest, MatchesElementsOnTheirLocalName) {
 TEST(StructureDigest, SkipsAnItemrefThatResolvesToNoManifestItem) {
   const std::string xml = opf("", R"(<item id="a" href="ch1.xhtml"/><item id="b" href="ch2.xhtml"/>)",
                               R"(<itemref idref="a"/><itemref idref="gone"/><itemref idref="b"/>)");
+
+  EXPECT_EQ(digestOf(xml), md5Of("ch1.xhtml\nch2.xhtml"));
+}
+
+TEST(StructureDigest, SkipsAnItemThatCarriesNoHref) {
+  const std::string xml = opf("", R"(<item id="a" href="ch1.xhtml"/><item id="b"/><item id="c" href="ch2.xhtml"/>)",
+                              R"(<itemref idref="a"/><itemref idref="b"/><itemref idref="c"/>)");
 
   EXPECT_EQ(digestOf(xml), md5Of("ch1.xhtml\nch2.xhtml"));
 }
@@ -154,6 +202,26 @@ TEST(StructureDigest, IsEmptyWithoutASpine) {
 TEST(StructureDigest, IsEmptyWhenTheSpineNamesNothingThatResolves) {
   const std::string xml = opf("", R"(<item id="a" href="ch1.xhtml"/>)", R"(<itemref idref="gone"/>)");
   EXPECT_EQ(digestOf(xml), "");
+}
+
+TEST(Rootfile, PrefersTheFirstPackageDocument) {
+  const std::string container = R"(<container><rootfiles>)"
+                                R"(<rootfile full-path="other.xml" media-type="application/x-dtbook+xml"/>)"
+                                R"(<rootfile full-path="OPS/first.opf" media-type="application/oebps-package+xml"/>)"
+                                R"(<rootfile full-path="OPS/second.opf" media-type="application/oebps-package+xml"/>)"
+                                R"(</rootfiles></container>)";
+
+  EXPECT_EQ(rootfileOf(container), "OPS/first.opf");
+}
+
+TEST(Rootfile, FallsBackToTheFirstOfAnyTypeWhenNoneDeclaresThePackage) {
+  const std::string container =
+      R"(<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container"><ocf:rootfiles>)"
+      R"(<ocf:rootfile full-path="only.opf"/>)"
+      R"(<ocf:rootfile full-path="later.opf"/>)"
+      R"(</ocf:rootfiles></ocf:container>)";
+
+  EXPECT_EQ(rootfileOf(container), "only.opf");
 }
 
 // ---------------------------------------------------------------------------
