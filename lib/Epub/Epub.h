@@ -9,6 +9,7 @@
 
 #include "Epub/BookMetadataCache.h"
 #include "Epub/css/CssParser.h"
+#include "Epub/parsers/OpfStructureSink.h"
 
 class ZipFile;
 
@@ -69,6 +70,10 @@ class Epub {
   // Extract an item to a file on SD. On failure the partial file is removed.
   bool extractItemToFile(const std::string& itemHref, const std::string& destPath) const;
   bool getItemSize(const std::string& itemHref, size_t* size) const;
+  // Re-reads the OPF to feed the sink the package identifier and the spine's
+  // manifest hrefs as the attributes write them. Independent of the spine
+  // cache, so it answers the same on a warm load as on a cold build.
+  bool readStructureIdentity(OpfStructureSink& sink);
   BookMetadataCache::SpineEntry getSpineItem(int spineIndex) const;
   BookMetadataCache::TocEntry getTocItem(int tocIndex) const;
   int getSpineItemsCount() const;

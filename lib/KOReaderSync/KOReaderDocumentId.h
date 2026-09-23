@@ -1,34 +1,6 @@
 #pragma once
-#include <MD5Builder.h>
-
+#include <cstddef>
 #include <string>
-
-/**
- * Digest of what a book is and how it is laid out: its title, its author and
- * the file name of every spine item in reading order.
- *
- * None of that is a property of the archive's bytes, so a copy repacked at
- * another compression level — or run through the EPUB Optimizer, which
- * re-encodes images and rewrites the OPF manifest but leaves the spine alone —
- * keeps this digest while its partial MD5 changes. The spine list is also what
- * a KOReader xpointer counts: `/body/DocFragment[N]` is the Nth entry of it, so
- * two copies agreeing here agree on where a stored position points.
- *
- * Hrefs are fed in reading order; the digest is order-sensitive because the
- * xpointer is.
- */
-class KOReaderStructureDigest {
- public:
-  KOReaderStructureDigest(const std::string& title, const std::string& authors);
-  void addSpineHref(const std::string& href);
-
-  /** @return 32-character lowercase hex string, or empty if no spine item was added */
-  std::string finish();
-
- private:
-  MD5Builder md5;
-  int spineCount = 0;
-};
 
 /**
  * Calculate KOReader document ID (partial MD5 hash).
@@ -61,15 +33,6 @@ class KOReaderDocumentId {
    * @return 32-character lowercase hex MD5 of the filename
    */
   static std::string calculateFromFilename(const std::string& filePath);
-
-  /**
-   * Calculate the digest that names the work rather than the file: its title
-   * and author, normalized. Another edition of the same book matches here and
-   * nowhere stronger.
-   *
-   * @return 32-character lowercase hex string, or empty when both are empty
-   */
-  static std::string calculateFromMetadata(const std::string& title, const std::string& authors);
 
  private:
   // Size of each chunk to read at each offset

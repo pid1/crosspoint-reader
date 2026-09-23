@@ -4,13 +4,7 @@
 #include <Logging.h>
 #include <MD5Builder.h>
 
-#include "KOReaderIdentifiers.h"
-
 namespace {
-// Separator between the fields of a composite digest. It cannot occur in a
-// normalized title, author or spine href, so no two field lists collide.
-constexpr char FIELD_SEPARATOR[] = "\n";
-
 // Extract filename from path (everything after last '/')
 std::string getFilename(const std::string& path) {
   const size_t pos = path.rfind('/');
@@ -34,54 +28,6 @@ std::string KOReaderDocumentId::calculateFromFilename(const std::string& filePat
 
   std::string result = md5.toString().c_str();
   LOG_DBG("KODoc", "Filename hash: %s (from '%s')", result.c_str(), filename.c_str());
-  return result;
-}
-
-std::string KOReaderDocumentId::calculateFromMetadata(const std::string& title, const std::string& authors) {
-  const std::string normalizedTitle = KOReaderIdentifiers::normalizeMetadataText(title);
-  const std::string normalizedAuthors = KOReaderIdentifiers::normalizeMetadataText(authors);
-  if (normalizedTitle.empty() && normalizedAuthors.empty()) {
-    LOG_DBG("KODoc", "No title or author to hash");
-    return "";
-  }
-
-  MD5Builder md5;
-  md5.begin();
-  md5.add(normalizedTitle.c_str());
-  md5.add(FIELD_SEPARATOR);
-  md5.add(normalizedAuthors.c_str());
-  md5.calculate();
-
-  std::string result = md5.toString().c_str();
-  LOG_DBG("KODoc", "Metadata hash: %s (from '%s' / '%s')", result.c_str(), normalizedTitle.c_str(),
-          normalizedAuthors.c_str());
-  return result;
-}
-
-KOReaderStructureDigest::KOReaderStructureDigest(const std::string& title, const std::string& authors) {
-  md5.begin();
-  md5.add(KOReaderIdentifiers::normalizeMetadataText(title).c_str());
-  md5.add(FIELD_SEPARATOR);
-  md5.add(KOReaderIdentifiers::normalizeMetadataText(authors).c_str());
-}
-
-void KOReaderStructureDigest::addSpineHref(const std::string& href) {
-  const std::string_view key = KOReaderIdentifiers::spineHrefKey(href);
-  if (key.empty()) {
-    return;
-  }
-  md5.add(FIELD_SEPARATOR);
-  md5.add(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-  spineCount++;
-}
-
-std::string KOReaderStructureDigest::finish() {
-  if (spineCount == 0) {
-    return "";
-  }
-  md5.calculate();
-  std::string result = md5.toString().c_str();
-  LOG_DBG("KODoc", "Structure hash: %s (from %d spine items)", result.c_str(), spineCount);
   return result;
 }
 
