@@ -119,6 +119,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
 }
 
 KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& documentHash,
+                                                          const std::vector<KOReaderIdentifier>& identifiers,
                                                           KOReaderProgress& outProgress) {
   lastHttpCode = 0;
   if (!KOREADER_STORE.hasCredentials()) {
@@ -126,7 +127,14 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     return NO_CREDENTIALS;
   }
 
-  const std::string url = KOREADER_STORE.getBaseUrl() + "/syncs/progress/" + documentHash;
+  // A GET has no body, so the identifier list travels flattened into one query
+  // parameter. Omitting it is what makes this request identical to the one a
+  // server without the feature already answers.
+  std::string url = KOREADER_STORE.getBaseUrl() + "/syncs/progress/" + documentHash;
+  const std::string ids = KOReaderIdentifiers::flatten(identifiers);
+  if (!ids.empty()) {
+    url += "?ids=" + ids;
+  }
   LOG_DBG("KOSync", "Getting progress: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
   if (insufficientHeap()) return LOW_MEMORY;
 
@@ -172,6 +180,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     outProgress.device = doc["device"].as<std::string>();
     outProgress.deviceId = doc["device_id"].as<std::string>();
     outProgress.timestamp = doc["timestamp"].as<int64_t>();
+    outProgress.match = doc["match"].as<std::string>();
+    outProgress.progressMatch = doc["progress_match"].as<std::string>();
 
     outProgress.position.reset();
     if (KOREADER_STORE.usesCrossPointSyncServer()) {
@@ -192,7 +202,8 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
       }
     }
 
-    LOG_DBG("KOSync", "Got progress: %.2f%% at %s", outProgress.percentage * 100, outProgress.progress.c_str());
+    LOG_DBG("KOSync", "Got progress: %.2f%% at %s (match=%s progress_match=%s)", outProgress.percentage * 100,
+            outProgress.progress.c_str(), outProgress.match.c_str(), outProgress.progressMatch.c_str());
     return OK;
   }
 
@@ -216,6 +227,17 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   // Build JSON body
   JsonDocument doc;
   doc["document"] = progress.document;
+  if (!progress.identifiers.empty()) {
+    // The response carries the canonical document the record is stored under,
+    // which the next request reaches through the same list, so nothing here
+    // needs to read it back.
+    const JsonArray ids = doc["identifiers"].to<JsonArray>();
+    for (const auto& identifier : progress.identifiers) {
+      const JsonObject entry = ids.add<JsonObject>();
+      entry["type"] = identifier.type;
+      entry["value"] = identifier.value;
+    }
+  }
   if (progress.metadata.has_value()) {
     auto meta = doc["metadata"].to<JsonObject>();
     meta["filename"] = progress.metadata->filename;
