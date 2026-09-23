@@ -13,6 +13,16 @@
 
 class ZipFile;
 
+/**
+ * What the OPF says the book is, rather than what the archive holds: the title
+ * and one entry per `dc:creator`, each with runs of whitespace collapsed and
+ * trimmed. The kosync `metadata` identifier is a digest over these.
+ */
+struct BookIdentity {
+  std::string title;
+  std::vector<std::string> authors;
+};
+
 class Epub {
   // the ncx file (EPUB 2)
   std::string tocNcxItem;
@@ -71,9 +81,10 @@ class Epub {
   bool extractItemToFile(const std::string& itemHref, const std::string& destPath) const;
   bool getItemSize(const std::string& itemHref, size_t* size) const;
   // Re-reads the OPF to feed the sink the package identifier and the spine's
-  // manifest hrefs as the attributes write them. Independent of the spine
-  // cache, so it answers the same on a warm load as on a cold build.
-  bool readStructureIdentity(OpfStructureSink& sink);
+  // manifest hrefs as the attributes write them, and `identity` the title and
+  // the creators. Independent of the spine cache, so it answers the same on a
+  // warm load as on a cold build.
+  bool readOpfIdentity(OpfStructureSink& sink, BookIdentity* identity = nullptr);
   BookMetadataCache::SpineEntry getSpineItem(int spineIndex) const;
   BookMetadataCache::TocEntry getTocItem(int tocIndex) const;
   int getSpineItemsCount() const;

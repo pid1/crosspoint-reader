@@ -40,6 +40,9 @@ bool isXmlWhitespace(const char c) { return c == ' ' || c == '\t' || c == '\r' |
 // far below this anyway, so overflow is clamped, not fatal.
 constexpr size_t MAX_METADATA_TEXT = 512;
 
+// Between two `dc:creator` values in the display string.
+constexpr char AUTHOR_SEPARATOR[] = ", ";
+
 void appendMetadataText(std::string& out, const XML_Char* text, const int len, bool& spacePending,
                         bool* separatorPending = nullptr) {
   if (out.size() >= MAX_METADATA_TEXT) return;  // already clamped and logged
@@ -55,7 +58,7 @@ void appendMetadataText(std::string& out, const XML_Char* text, const int len, b
       return;
     }
     if (separatorPending != nullptr && *separatorPending) {
-      out.append(", ");
+      out.append(AUTHOR_SEPARATOR);
       *separatorPending = false;
       spacePending = false;
     } else if (spacePending && !out.empty()) {
@@ -199,6 +202,7 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     self->state = IN_BOOK_AUTHOR;
     self->metadataSpacePending = false;
     self->authorSeparatorPending = !self->author.empty();
+    self->creatorStart = self->author.size();
     return;
   }
 
@@ -529,6 +533,13 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
 
   if (self->state == IN_BOOK_AUTHOR && xmlLocalNameEquals(name, "creator")) {
     self->state = IN_METADATA;
+    std::string creator = self->author.substr(self->creatorStart);
+    if (creator.rfind(AUTHOR_SEPARATOR, 0) == 0) {
+      creator.erase(0, std::char_traits<char>::length(AUTHOR_SEPARATOR));
+    }
+    if (!creator.empty()) {
+      self->creators.push_back(std::move(creator));
+    }
     return;
   }
 

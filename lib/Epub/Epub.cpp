@@ -50,16 +50,16 @@ bool Epub::findContentOpfFile(std::string* contentOpfFile, ZipFile* sharedZip) c
   return true;
 }
 
-bool Epub::readStructureIdentity(OpfStructureSink& sink) {
+bool Epub::readOpfIdentity(OpfStructureSink& sink, BookIdentity* identity) {
   std::string contentOpfFilePath;
   if (!findContentOpfFile(&contentOpfFilePath)) {
-    LOG_ERR("EBP", "Could not find content.opf for the structure identifier");
+    LOG_ERR("EBP", "Could not find content.opf for the sync identifiers");
     return false;
   }
 
   size_t contentOpfSize;
   if (!getItemSize(contentOpfFilePath, &contentOpfSize)) {
-    LOG_ERR("EBP", "Could not get size of content.opf for the structure identifier");
+    LOG_ERR("EBP", "Could not get size of content.opf for the sync identifiers");
     return false;
   }
 
@@ -67,11 +67,19 @@ bool Epub::readStructureIdentity(OpfStructureSink& sink) {
   // the spine cache holds them resolved against the OPF directory instead.
   ContentOpfParser opfParser(getCachePath(), getBasePath(), contentOpfSize, nullptr, false, &sink);
   if (!opfParser.setup()) {
-    LOG_ERR("EBP", "Could not setup content.opf parser for the structure identifier");
+    LOG_ERR("EBP", "Could not setup content.opf parser for the sync identifiers");
     return false;
   }
 
-  return readItemContentsToStream(contentOpfFilePath, opfParser, 1024);
+  if (!readItemContentsToStream(contentOpfFilePath, opfParser, 1024)) {
+    return false;
+  }
+
+  if (identity) {
+    identity->title = std::move(opfParser.title);
+    identity->authors = std::move(opfParser.creators);
+  }
+  return true;
 }
 
 bool Epub::parseContentOpf(BookMetadataCache::BookMetadata& bookMetadata, const bool writeSpineEntries,

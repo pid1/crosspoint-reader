@@ -236,6 +236,11 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
       const JsonObject entry = ids.add<JsonObject>();
       entry["type"] = identifier.type;
       entry["value"] = identifier.value;
+      // [K-ID-16]: a name that can belong to another work seeds this copy from
+      // whatever it reaches and leaves that record alone.
+      if (identifier.weak) {
+        entry["weak"] = true;
+      }
     }
   }
   if (progress.metadata.has_value()) {

@@ -55,7 +55,7 @@ const char* matchMethodName(const DocumentMatchMethod method) {
 // digests are dropped: a book whose OPF could not be read offers fewer names.
 std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const DocumentMatchMethod method,
                                                  const std::string& documentHash, const std::string& structureDigest,
-                                                 const bool includeAlternateId) {
+                                                 const std::string& metadataDigest, const bool includeAlternateId) {
   const bool matchesOnFilename = method == DocumentMatchMethod::FILENAME;
   const std::string contentDigest =
       matchesOnFilename ? (includeAlternateId ? KOReaderDocumentId::calculate(path) : std::string{}) : documentHash;
@@ -64,15 +64,16 @@ std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const 
                         : (includeAlternateId ? KOReaderDocumentId::calculateFromFilename(path) : std::string{});
 
   std::vector<KOReaderIdentifier> identifiers;
-  identifiers.reserve(3);
+  identifiers.reserve(4);
 
   const auto append = [&identifiers](const char* type, const std::string& value) {
     if (value.empty() || identifiers.size() >= KOReaderIdentifiers::MAX_ENTRIES) return;
-    identifiers.push_back({type, value});
+    identifiers.push_back({type, value, KOReaderIdentifiers::isWeak(type)});
   };
 
   append(KOReaderIdentifiers::TYPE_CONTENT, contentDigest);
   append(KOReaderIdentifiers::TYPE_STRUCTURE, structureDigest);
+  append(KOReaderIdentifiers::TYPE_METADATA, metadataDigest);
   append(KOReaderIdentifiers::TYPE_FILENAME, filenameDigest);
   return identifiers;
 }
@@ -82,13 +83,14 @@ std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const 
 KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            const std::string& epubPath, CrossPointPosition localPosition,
                                            SavedProgressPosition localKoPos, std::string localChapterName,
-                                           std::string structureDigest)
+                                           std::string structureDigest, std::string metadataDigest)
     : Activity("KOReaderSync", renderer, mappedInput),
       UiAppHost(renderer),
       epubPath(epubPath),
       localChapterName(std::move(localChapterName)),
       localPosition(localPosition),
       structureDigest(std::move(structureDigest)),
+      metadataDigest(std::move(metadataDigest)),
       remoteProgress{},
       remotePosition{},
       localProgress(std::move(localKoPos)) {}
@@ -141,7 +143,7 @@ bool KOReaderSyncActivity::smartSyncEnabled() const {
 void KOReaderSyncActivity::prepareIdentifiers(const DocumentMatchMethod method) {
   identifiers.clear();
   if (!KOREADER_STORE.getMatchOtherCopies()) return;
-  identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, smartSyncEnabled());
+  identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, metadataDigest, smartSyncEnabled());
 }
 
 void KOReaderSyncActivity::markAutoReturn() { autoReturnAt = millis() + AUTO_RETURN_DELAY_MS; }
