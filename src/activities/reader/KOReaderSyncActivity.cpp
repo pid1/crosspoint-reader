@@ -45,16 +45,53 @@ const char* matchMethodName(const DocumentMatchMethod method) {
   return method == DocumentMatchMethod::FILENAME ? "filename" : "binary";
 }
 
+const char* matchMethodType(const DocumentMatchMethod method) {
+  return method == DocumentMatchMethod::FILENAME ? KOReaderIdentifiers::TYPE_FILENAME
+                                                 : KOReaderIdentifiers::TYPE_CONTENT;
+}
+
+// The other names this book answers to, in descending strength. [K-ID-8] puts
+// the configured document id first, because that is the `document` the request
+// addresses and an older client sending only it must reach the same record.
+// The alternate document id joins under smart sync, the mode that already asks
+// after both. Empty digests are dropped: a book whose OPF could not be read
+// simply offers fewer names.
+std::vector<KOReaderIdentifier> buildIdentifiers(const std::string& path, const DocumentMatchMethod method,
+                                                 const std::string& documentHash, const std::string& structureDigest,
+                                                 const std::string& metadataDigest, const bool includeAlternateId) {
+  std::vector<KOReaderIdentifier> identifiers;
+  identifiers.reserve(4);
+
+  const auto append = [&identifiers](const char* type, const std::string& value) {
+    if (value.empty() || identifiers.size() >= KOReaderIdentifiers::MAX_ENTRIES) return;
+    identifiers.push_back({type, value});
+  };
+
+  append(matchMethodType(method), documentHash);
+  if (includeAlternateId && method == DocumentMatchMethod::FILENAME) {
+    append(KOReaderIdentifiers::TYPE_CONTENT, KOReaderDocumentId::calculate(path));
+  }
+  append(KOReaderIdentifiers::TYPE_STRUCTURE, structureDigest);
+  append(KOReaderIdentifiers::TYPE_METADATA, metadataDigest);
+  if (includeAlternateId && method != DocumentMatchMethod::FILENAME) {
+    append(KOReaderIdentifiers::TYPE_FILENAME, KOReaderDocumentId::calculateFromFilename(path));
+  }
+  return identifiers;
+}
+
 }  // namespace
 
 KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
                                            const std::string& epubPath, CrossPointPosition localPosition,
-                                           SavedProgressPosition localKoPos, std::string localChapterName)
+                                           SavedProgressPosition localKoPos, std::string localChapterName,
+                                           std::string metadataDigest, std::string structureDigest)
     : Activity("KOReaderSync", renderer, mappedInput),
       UiAppHost(renderer),
       epubPath(epubPath),
       localChapterName(std::move(localChapterName)),
       localPosition(localPosition),
+      metadataDigest(std::move(metadataDigest)),
+      structureDigest(std::move(structureDigest)),
       remoteProgress{},
       remotePosition{},
       localProgress(std::move(localKoPos)) {}
@@ -150,8 +187,11 @@ void KOReaderSyncActivity::performSync() {
     return;
   }
   const std::string primaryHash = documentHash;
+  identifiers =
+      buildIdentifiers(epubPath, primaryMethod, documentHash, structureDigest, metadataDigest, smartSyncEnabled());
 
-  LOG_DBG("KOSync", "Document hash (%s): %s", matchMethodName(primaryMethod), documentHash.c_str());
+  LOG_DBG("KOSync", "Document hash (%s): %s, %u identifiers", matchMethodName(primaryMethod), documentHash.c_str(),
+          (unsigned)identifiers.size());
 
   {
     RenderLock lock(*this);
@@ -161,19 +201,25 @@ void KOReaderSyncActivity::performSync() {
 
   // Fetch remote progress. In smart mode, retain the alternate document-id
   // record until both records can be mapped after the Epub is reloaded.
-  auto result = KOReaderSyncClient::getProgress(documentHash, remoteProgress);
+  auto result = KOReaderSyncClient::getProgress(documentHash, identifiers, remoteProgress);
   LOG_DBG("KOSync", "Primary remote (%s): result=%d http=%d doc=%s local=%.6f remote=%.6f xpath=%s",
           matchMethodName(primaryMethod), result, KOReaderSyncClient::lastHttpCode, documentHash.c_str(),
           localProgress.percentage, remoteProgress.percentage, remoteProgress.progress.c_str());
 
   KOReaderProgress alternateProgress;
   bool hasAlternateProgress = false;
-  if (smartSyncEnabled()) {
+  // A `match` means the server walked the whole identifier list, which already
+  // named the alternate document id, so the second request would ask the same
+  // question twice. A miss reports no match either way, and then the probe is
+  // the only way to tell the two kinds of server apart.
+  if (smartSyncEnabled() && remoteProgress.match.empty()) {
     const DocumentMatchMethod altMethod = alternateMatchMethod(primaryMethod);
     const std::string altHash = calculateDocumentHashForMethod(epubPath, altMethod);
     if (!altHash.empty() && altHash != documentHash) {
       KOReaderProgress altProgress;
-      const auto altResult = KOReaderSyncClient::getProgress(altHash, altProgress);
+      // Addressed by its own digest alone: [K-ID-8] would reject a list led by
+      // anything else, and this request exists for servers that match on one id.
+      const auto altResult = KOReaderSyncClient::getProgress(altHash, {}, altProgress);
       LOG_DBG("KOSync", "Alternate remote (%s): result=%d http=%d doc=%s local=%.6f remote=%.6f xpath=%s",
               matchMethodName(altMethod), altResult, KOReaderSyncClient::lastHttpCode, altHash.c_str(),
               localProgress.percentage, altProgress.percentage, altProgress.progress.c_str());
@@ -239,10 +285,18 @@ void KOReaderSyncActivity::performSync() {
     const auto mapRemoteProgress = [&](const KOReaderProgress& progress) {
       // The standard KOReader progress XPath is the authoritative content anchor.
       // The CrossPoint server's existing rich page hints remain a legacy fallback.
-      const SavedProgressPosition koPos = {progress.progress, progress.percentage};
+      // Both describe the copy their writer held: when `progress_match` says that
+      // copy is another file, its DocFragment indices count a different spine and
+      // the percentage is the only part of the position that transfers.
+      const bool followXPath = KOReaderIdentifiers::progressTrusted(progress.progressMatch);
+      if (!followXPath) {
+        LOG_DBG("KOSync", "progress_match=%s: mapping %.6f by percentage, xpointer belongs to another copy",
+                progress.progressMatch.c_str(), progress.percentage);
+      }
+      const SavedProgressPosition koPos = {followXPath ? progress.progress : std::string(), progress.percentage};
       CrossPointPosition mapped =
           ProgressMapper::toCrossPoint(epub, koPos, renderer, localPosition.spineIndex, localPosition.totalPages);
-      if (!mapped.hasVisibleTextOffset && progress.position.has_value()) {
+      if (followXPath && !mapped.hasVisibleTextOffset && progress.position.has_value()) {
         // toCrossPoint above already tried koPos.xpath; if the rich position carries the same XPath,
         // tell fromRichPosition to skip re-resolving it and use its page hints directly.
         const bool sameXPath = progress.position->xpath == progress.progress;
@@ -310,6 +364,7 @@ void KOReaderSyncActivity::performUpload() {
   // localProgress was pre-computed in EpubReaderActivity before the Epub was released.
   KOReaderProgress progress;
   progress.document = documentHash;
+  progress.identifiers = identifiers;
   progress.progress = localProgress.xpath;
   progress.percentage = localProgress.percentage;
 
@@ -429,9 +484,9 @@ void KOReaderSyncActivity::chooseResultOption() {
 
 void KOReaderSyncActivity::startUpload() {
   if (documentHash.empty()) {
-    documentHash = KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::FILENAME
-                       ? KOReaderDocumentId::calculateFromFilename(epubPath)
-                       : KOReaderDocumentId::calculate(epubPath);
+    const DocumentMatchMethod method = KOREADER_STORE.getMatchMethod();
+    documentHash = calculateDocumentHashForMethod(epubPath, method);
+    identifiers = buildIdentifiers(epubPath, method, documentHash, structureDigest, metadataDigest, smartSyncEnabled());
   }
   performUpload();
 }

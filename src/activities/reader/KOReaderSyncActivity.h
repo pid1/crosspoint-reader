@@ -4,6 +4,8 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "KOReaderSyncClient.h"
 #include "ProgressMapper.h"
@@ -24,7 +26,7 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
  public:
   explicit KOReaderSyncActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath,
                                 CrossPointPosition localPosition, SavedProgressPosition localKoPos,
-                                std::string localChapterName);
+                                std::string localChapterName, std::string metadataDigest, std::string structureDigest);
 
   void onEnter() override;
   void onExit() override;
@@ -54,6 +56,13 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
   State state = WIFI_SELECTION;
   std::string statusMessage;
   std::string documentHash;
+
+  // Digests of what the book is rather than of the file it arrived in, computed
+  // in the reader while the Epub was still open. Empty when the reader could not
+  // read the OPF, which drops the identifier rather than the request.
+  std::string metadataDigest;
+  std::string structureDigest;
+  std::vector<KOReaderIdentifier> identifiers;
 
   // Remote progress data
   bool hasRemoteProgress = false;

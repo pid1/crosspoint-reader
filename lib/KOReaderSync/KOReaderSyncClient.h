@@ -2,6 +2,9 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
+
+#include "KOReaderIdentifiers.h"
 
 /**
  * Optional document metadata sent alongside progress sync requests.
@@ -41,6 +44,12 @@ struct KOReaderProgress {
   int64_t timestamp;                             // Unix timestamp of last update
   std::optional<KOReaderMetadata> metadata;      // Optional document metadata
   std::optional<KOReaderRichPosition> position;  // Optional rich position (crosspoint-sync servers only)
+
+  // Optional multi-identifier matching (koreader-sync-server PR #55). Servers
+  // without it answer as they always have and leave both match fields empty.
+  std::vector<KOReaderIdentifier> identifiers;  // Sent, strongest first, first value == document
+  std::string match;                            // Identifier type that found the record
+  std::string progressMatch;                    // Strongest identifier shared with the writer of `progress`, or "none"
 };
 
 /**
@@ -88,10 +97,13 @@ class KOReaderSyncClient {
   /**
    * Get reading progress for a document.
    * @param documentHash The document hash (from KOReaderDocumentId)
+   * @param identifiers Other names for this document, strongest first; empty asks
+   *        the literal documentHash and nothing else
    * @param outProgress Output: the progress data
    * @return OK on success, NOT_FOUND if no progress exists, error code on failure
    */
-  static Error getProgress(const std::string& documentHash, KOReaderProgress& outProgress);
+  static Error getProgress(const std::string& documentHash, const std::vector<KOReaderIdentifier>& identifiers,
+                           KOReaderProgress& outProgress);
 
   /**
    * Update reading progress for a document.

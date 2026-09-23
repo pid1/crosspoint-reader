@@ -30,6 +30,7 @@
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderDocumentId.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "ProgressMapper.h"
@@ -957,6 +958,20 @@ bool EpubReaderActivity::launchKOReaderSync() {
   std::string localChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
   const std::string savedEpubPath = epub->getPath();
 
+  // The identifiers that describe the book rather than the file, taken while the
+  // Epub is open: the sync activity runs with it released, and reloading it there
+  // would compete with the TLS handshake for heap.
+  std::string metadataDigest = KOReaderDocumentId::calculateFromMetadata(epub->getTitle(), epub->getAuthor());
+  std::string structureDigest;
+  {
+    KOReaderStructureDigest digest(epub->getTitle(), epub->getAuthor());
+    const int spineCount = epub->getSpineItemsCount();
+    for (int i = 0; i < spineCount; i++) {
+      digest.addSpineHref(epub->getSpineItem(i).href);
+    }
+    structureDigest = digest.finish();
+  }
+
   if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
     LOG_ERR("KOSync", "Aborting sync because current progress could not be saved");
     pendingSyncSaveError = true;
@@ -986,7 +1001,8 @@ bool EpubReaderActivity::launchKOReaderSync() {
   LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
 
   activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
-      renderer, mappedInput, savedEpubPath, localPos, std::move(localKoPos), std::move(localChapterName)));
+      renderer, mappedInput, savedEpubPath, localPos, std::move(localKoPos), std::move(localChapterName),
+      std::move(metadataDigest), std::move(structureDigest)));
   return true;
 }
 
